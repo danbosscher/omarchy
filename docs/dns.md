@@ -51,10 +51,6 @@ bash test/shell.d/dns-policy-test.sh
 bash test/shell.d/dns-sudoers-test.sh
 ```
 
-Run real-daemon integration on an Omarchy/Arch host with user/network namespaces available:
+During the PR investigation, a disposable network-namespace lab also verified actual IPv4/IPv6 DNS answers, saved-profile preservation, split DNS and WireGuard routing, reconnects, resolver restart, and DHCP lease renewal without a new transaction or address change. The lab was used for one-off validation; it is not part of the maintained test suite.
 
-```bash
-OMARCHY_TEST_DNS_INTEGRATION=1 bash test/shell.d/dns-integration-test.sh
-```
-
-The integration test uses bubblewrap to isolate the network, D-Bus, `/etc`, `/run`, and `/var`. It starts real NetworkManager, resolved, and the dispatcher, with distinguishable DNS servers and a short-lease DHCP packet fixture in a separate peer network namespace. It verifies actual query answers, IPv4 and IPv6 servers, unchanged saved profiles, VPN domain routing, NetworkManager-managed WireGuard with negative DNS priority, pre-up persistence, DNS reload, resolver restart, a default uplink without native DNS, and lease renewal without a new DHCP transaction. It neither installs the change nor touches the development host's network. Systemd service orchestration is represented by executing the shipped restart hook; a full boot and physical Wi-Fi/VPN interoperability remain release-validation tasks.
+For release validation on a disposable Omarchy system, switch providers while watching `resolvectl status` and the NetworkManager DHCP journal. Confirm that a fresh lookup uses the selected provider, saved connection settings and the address stay unchanged, reconnecting retains the selection, and DHCP restores the connection's own DNS. With a VPN connected, also check private-domain resolution and its default DNS route. A full boot and physical Wi-Fi/VPN interoperability remain release-validation tasks.
