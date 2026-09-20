@@ -19,7 +19,6 @@ if (( EUID == 0 )); then
 fi
 
 NM_DNS_CONF=/etc/NetworkManager/conf.d/20-omarchy-dns.conf
-dns_connections_changed=false
 
 provider_from_arg() {
   case "${1:-}" in
@@ -144,69 +143,11 @@ clear_networkmanager_dns() {
   rm -f "$NM_DNS_CONF"
 }
 
-networkmanager_dns_connection() {
-  case "$1" in
-    802-11-wireless|802-3-ethernet) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-connection_uses_dhcp_dns() {
-  local uuid="$1"
-  local -a dns_settings=()
-
-  mapfile -t dns_settings < <(nmcli -g ipv4.ignore-auto-dns,ipv4.dns,ipv6.ignore-auto-dns,ipv6.dns connection show "$uuid")
-
-  [[ ${dns_settings[0]:-} == "no" &&
-    -z ${dns_settings[1]:-} &&
-    ${dns_settings[2]:-} == "no" &&
-    -z ${dns_settings[3]:-} ]]
-}
-
-clear_connection_dns() {
-  local uuid type
-
-  while IFS=: read -r uuid type; do
-    [[ -n $uuid ]] || continue
-    networkmanager_dns_connection "$type" || continue
-    if connection_uses_dhcp_dns "$uuid"; then
-      continue
-    fi
-
-    nmcli connection modify "$uuid" \
-      ipv4.ignore-auto-dns no \
-      ipv4.dns "" \
-      ipv6.ignore-auto-dns no \
-      ipv6.dns "" \
-      >/dev/null
-    dns_connections_changed=true
-  done < <(nmcli -t -f UUID,TYPE connection show)
-}
-
-reapply_active_dns_connections() {
-  local device type state
-
-  while IFS=: read -r device type state; do
-    [[ -n $device && $state == connected ]] || continue
-    case "$type" in
-      wifi|ethernet)
-        nmcli device reapply "$device" >/dev/null 2>&1 || true
-        ;;
-    esac
-  done < <(nmcli -t -f DEVICE,TYPE,STATE device status)
-}
-
 reload_dns_stack() {
   if systemctl is-active --quiet NetworkManager.service 2>/dev/null; then
     # Global DNS overrides per-connection DNS. Load it without reapplying the
     # active profile, because reapply restarts DHCP and can interrupt the link.
     nmcli general reload conf >/dev/null 2>&1 || systemctl reload NetworkManager.service 2>/dev/null || true
-
-    # Earlier Quattro builds also wrote provider DNS into every saved profile.
-    # Reapply only when DHCP has just cleaned up those legacy settings.
-    if [[ $dns_connections_changed == "true" ]]; then
-      reapply_active_dns_connections
-    fi
   fi
 
   systemctl reload systemd-resolved.service 2>/dev/null || systemctl restart systemd-resolved.service
@@ -261,8 +202,10 @@ EOF
   ;;
 
 DHCP)
+  # Restore the connection's own DNS policy without changing saved profiles.
+  # Earlier builds left no ownership marker for their per-profile overrides,
+  # so those cannot be safely distinguished from user-configured static DNS.
   clear_networkmanager_dns
-  clear_connection_dns
   tee /etc/systemd/resolved.conf >/dev/null <<'EOF'
 [Resolve]
 DNSOverTLS=no
